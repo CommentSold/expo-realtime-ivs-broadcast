@@ -2,6 +2,16 @@
 
 All notable changes to `expo-realtime-ivs-broadcast`.
 
+## 0.4.1 — 2026-11-12
+
+### Added
+
+- **iOS: close button in the PiP window.** The video-call PiP window has no
+  system close control, so the PiP content view now draws an "X" (top-left).
+  It stops PiP without restoring the app; consumers see `onPiPStateChanged`
+  `stopped` with no preceding `restored`. Tapping anywhere else still restores
+  the app. Play/pause and skip are not provided (live stream, video-call PiP).
+
 ## 0.4.0 — 2026-11-12
 
 CommentSold fork. Focus: production hardening for the viewer (subscribe-only) path.

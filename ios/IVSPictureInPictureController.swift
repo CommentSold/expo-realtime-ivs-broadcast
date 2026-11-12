@@ -404,6 +404,10 @@ public class IVSPictureInPictureController: NSObject {
             sampleBufferView.topAnchor.constraint(equalTo: pipVideoCallVC.view.topAnchor),
             sampleBufferView.bottomAnchor.constraint(equalTo: pipVideoCallVC.view.bottomAnchor)
         ])
+
+        // The video-call PiP window has no system close control, so draw our
+        // own. Tapping anywhere else still restores the app (iOS's default).
+        installCloseButton(in: pipVideoCallVC.view)
         
         // NOTE: We'll set the activeSourceView later when setupWithSourceView is called
         // The activeVideoCallSourceView MUST be the actual visible view showing video
@@ -415,6 +419,34 @@ public class IVSPictureInPictureController: NSObject {
         return true
     }
     
+    /// Adds a small "X" to the PiP content view that stops PiP without
+    /// restoring the app. The resulting `stopped` state (with no preceding
+    /// `restored`) is how consumers tell a close from a tap-to-return.
+    private func installCloseButton(in container: UIView) {
+        let button = UIButton(type: .custom, primaryAction: UIAction { [weak self] _ in
+            print("🖼️ [PiP] Close button tapped")
+            self?.pipController?.stopPictureInPicture()
+        })
+        let symbol = UIImage(
+            systemName: "xmark",
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 14, weight: .bold)
+        )
+        button.setImage(symbol, for: .normal)
+        button.tintColor = .white
+        button.backgroundColor = UIColor.black.withAlphaComponent(0.55)
+        button.layer.cornerRadius = 16
+        button.accessibilityLabel = "Close"
+        button.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(button)
+        NSLayoutConstraint.activate([
+            button.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
+            button.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
+            button.widthAnchor.constraint(equalToConstant: 32),
+            button.heightAnchor.constraint(equalToConstant: 32)
+        ])
+        container.bringSubviewToFront(button)
+    }
+
     /// Clean up state for re-enabling (without fully disabling)
     private func cleanupForReEnable() {
         // Stop any active PiP
