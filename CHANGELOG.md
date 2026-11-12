@@ -2,6 +2,32 @@
 
 All notable changes to `expo-realtime-ivs-broadcast`.
 
+## 0.4.0 — 2026-11-12
+
+CommentSold fork. Focus: production hardening for the viewer (subscribe-only) path.
+
+### Changed
+
+- **IVS Broadcast SDK bumped: Android 1.31.0 → 1.48.1, iOS 1.36 → 1.48.1.**
+  Both platforms compile clean (iOS Debug + Release, Android `compileDebugKotlin`).
+  Android emits new deprecation warnings for `Stage.Strategy` and
+  `Stage.SubscribeType`; migration to the replacement APIs is a follow-up.
+- **iOS now vendors the SDK xcframework instead of the CocoaPods dependency.**
+  AWS stopped publishing to CocoaPods at 1.39.0. `scripts/fetch-ios-sdk.sh`
+  downloads the Stages xcframework into `ios/Frameworks/` (gitignored); the
+  podspec vendors it. New `app.plugin.js` config plugin runs the script during
+  `expo prebuild`. Add `"expo-realtime-ivs-broadcast"` to the app's `plugins`.
+  Override the version with `IVS_SDK_VERSION`. Keep it in sync with
+  `android/build.gradle`.
+
+### Fixed
+
+- **A failed join now reads the same on both platforms.** iOS emitted
+  `onStageConnectionStateChanged` with `state: "error"` (not in the declared
+  `connecting | connected | disconnected` type); Android emitted no connection
+  event at all. Both now emit `onStageError` (fatal) plus a connection state of
+  `disconnected` with an `error` string.
+
 ## 0.3.2 — 2026-08-25
 
 ### Fixed

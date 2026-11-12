@@ -43,5 +43,5 @@ android {
 }
 
 dependencies {
-  implementation "com.amazonaws:ivs-broadcast:1.31.0:stages@aar"
+  implementation "com.amazonaws:ivs-broadcast:1.48.1:stages@aar"
 }

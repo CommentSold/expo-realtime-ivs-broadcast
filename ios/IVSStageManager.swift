@@ -1005,7 +1005,7 @@ class IVSStageManager: NSObject, IVSStageStreamDelegate, IVSStageStrategy, IVSSt
             let nsError = error as NSError
             delegate?.stageManagerDidEmitEvent(eventName: "onStageError", body: ["code": nsError.code, "description": "Failed to initialize IVSStage: \(error.localizedDescription)", "source": "IVSStageManager.joinStage.init", "isFatal": true])
             // Potentially update a connection state to reflect this failure if you have such a state before joining
-            delegate?.stageManagerDidEmitEvent(eventName: "onStageConnectionStateChanged", body: ["state": "error", "error": "Failed to initialize IVSStage: \(error.localizedDescription)"])
+            delegate?.stageManagerDidEmitEvent(eventName: "onStageConnectionStateChanged", body: ["state": "disconnected", "error": "Failed to initialize IVSStage: \(error.localizedDescription)"])
             return // Do not proceed if stage initialization fails
         }
         
@@ -1021,7 +1021,7 @@ class IVSStageManager: NSObject, IVSStageStreamDelegate, IVSStageStrategy, IVSSt
             print("Error attempting to join IVSStage: \(error)")
             let nsError = error as NSError
             delegate?.stageManagerDidEmitEvent(eventName: "onStageError", body: ["code": nsError.code, "description": "Failed to join IVSStage: \(error.localizedDescription)", "source": "IVSStageManager.joinStage.joinCall", "isFatal": true])
-            delegate?.stageManagerDidEmitEvent(eventName: "onStageConnectionStateChanged", body: ["state": "error", "error": "Failed to join IVSStage: \(error.localizedDescription)"])
+            delegate?.stageManagerDidEmitEvent(eventName: "onStageConnectionStateChanged", body: ["state": "disconnected", "error": "Failed to join IVSStage: \(error.localizedDescription)"])
         }
     }
 

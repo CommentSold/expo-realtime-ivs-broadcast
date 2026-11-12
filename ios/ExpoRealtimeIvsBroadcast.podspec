@@ -14,11 +14,16 @@ Pod::Spec.new do |s|
     :ios => '14.0'
   }
   s.swift_version  = '5.9'
-  s.source         = { git: 'https://github.com/ArviinM/expo-realtime-ivs-broadcast' }
+  s.source         = { git: 'https://github.com/CommentSold/expo-realtime-ivs-broadcast' }
   s.static_framework = true
 
   s.dependency 'ExpoModulesCore'
-  s.dependency 'AmazonIVSBroadcast/Stages', '~> 1.36.0'
+
+  # AWS stopped publishing the IVS SDK to CocoaPods at 1.39.0, so the Stages
+  # xcframework is downloaded by ../scripts/fetch-ios-sdk.sh (run by the config
+  # plugin during `expo prebuild`, or manually) and vendored here.
+  s.vendored_frameworks = 'Frameworks/AmazonIVSBroadcast.xcframework'
+  s.frameworks = 'AVFoundation', 'CoreMedia', 'VideoToolbox'
 
   # Swift/Objective-C compatibility
   s.pod_target_xcconfig = {

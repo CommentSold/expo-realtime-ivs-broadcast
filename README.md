@@ -27,6 +27,18 @@ Install the package in your Expo project:
 npx expo install expo-realtime-ivs-broadcast
 ```
 
+### iOS SDK download (config plugin)
+
+AWS no longer publishes the IVS Broadcast SDK to CocoaPods, so this package
+vendors the xcframework. Add the config plugin so `expo prebuild` downloads it
+before `pod install`:
+
+```json
+{ "expo": { "plugins": ["expo-realtime-ivs-broadcast"] } }
+```
+
+Without the plugin, run `bash node_modules/expo-realtime-ivs-broadcast/scripts/fetch-ios-sdk.sh` before `pod install`.
+
 ## Configuration
 
 ### iOS
