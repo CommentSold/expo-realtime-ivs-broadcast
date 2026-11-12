@@ -1297,10 +1297,16 @@ extension IVSPictureInPictureController: AVPictureInPictureControllerDelegate {
 extension IVSPictureInPictureController: AVPictureInPictureSampleBufferPlaybackDelegate {
     
     public func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController, setPlaying playing: Bool) {
-        // Live stream: pausing is not supported. Re-assert "playing" so the
-        // system button flips back instead of showing a stale paused state.
-        print("🖼️ [PiP] setPlaying: \(playing) (ignored - live stream)")
-        pictureInPictureController.invalidatePlaybackState()
+        // A live stream can't be paused, and iOS shows a stop (square) button
+        // for this kind of content, so honor it as "stop": end PiP without
+        // restoring the app. Consumers see `stopped` with no preceding
+        // `restored`, exactly like the X, and close the live.
+        print("🖼️ [PiP] setPlaying: \(playing) - treating as stop (live stream)")
+        if playing {
+            pictureInPictureController.invalidatePlaybackState()
+        } else {
+            pictureInPictureController.stopPictureInPicture()
+        }
     }
     
     public func pictureInPictureControllerTimeRangeForPlayback(_ pictureInPictureController: AVPictureInPictureController) -> CMTimeRange {

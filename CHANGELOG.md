@@ -2,6 +2,16 @@
 
 All notable changes to `expo-realtime-ivs-broadcast`.
 
+## 0.5.2 — 2026-11-12
+
+### Changed
+
+- **iOS viewer PiP: the center stop button now stops.** The sample-buffer PiP
+  window shows a stop (square) button for live content, and it used to do
+  nothing. Tapping it now ends PiP without restoring the app (same
+  `onPiPStateChanged: stopped` as the X), so consumers close the live. There is
+  no public API to hide the button.
+
 ## 0.5.1 — 2026-11-12
 
 ### Fixed
