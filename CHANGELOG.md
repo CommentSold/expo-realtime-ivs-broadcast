@@ -2,6 +2,27 @@
 
 All notable changes to `expo-realtime-ivs-broadcast`.
 
+## 0.5.0 — 2026-11-12
+
+### Changed
+
+- **iOS viewer PiP now uses the sample-buffer playback source** (`sourceView: 'remote'`).
+  The video-call API window has no system controls, and touches never reach
+  custom views in it (so the 0.4.1 close "X" was inert). The sample-buffer
+  window gets the system's own controls: close (X) and restore. Because the
+  system now owns the window, tapping its body reveals the controls instead of
+  restoring the app immediately; the expand button restores.
+  - The sample-buffer layer is hosted behind the remote stream view (on screen
+    but covered), fed by the existing `IVSImageDevice` frame callback.
+  - Live-stream playback: unbounded time range, `requiresLinearPlayback`
+    (no skip buttons), frames flagged display-immediately. Pause is not
+    supported; the play/pause button re-asserts "playing".
+  - Broadcaster PiP (`sourceView: 'local'`) is unchanged (video-call API).
+
+### Removed
+
+- The inert PiP close button added in 0.4.1.
+
 ## 0.4.1 — 2026-11-12
 
 ### Added

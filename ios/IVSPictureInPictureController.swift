@@ -405,9 +405,6 @@ public class IVSPictureInPictureController: NSObject {
             sampleBufferView.bottomAnchor.constraint(equalTo: pipVideoCallVC.view.bottomAnchor)
         ])
 
-        // The video-call PiP window has no system close control, so draw our
-        // own. Tapping anywhere else still restores the app (iOS's default).
-        installCloseButton(in: pipVideoCallVC.view)
         
         // NOTE: We'll set the activeSourceView later when setupWithSourceView is called
         // The activeVideoCallSourceView MUST be the actual visible view showing video
@@ -419,32 +416,15 @@ public class IVSPictureInPictureController: NSObject {
         return true
     }
     
-    /// Adds a small "X" to the PiP content view that stops PiP without
-    /// restoring the app. The resulting `stopped` state (with no preceding
-    /// `restored`) is how consumers tell a close from a tap-to-return.
-    private func installCloseButton(in container: UIView) {
-        let button = UIButton(type: .custom, primaryAction: UIAction { [weak self] _ in
-            print("🖼️ [PiP] Close button tapped")
-            self?.pipController?.stopPictureInPicture()
-        })
-        let symbol = UIImage(
-            systemName: "xmark",
-            withConfiguration: UIImage.SymbolConfiguration(pointSize: 14, weight: .bold)
-        )
-        button.setImage(symbol, for: .normal)
-        button.tintColor = .white
-        button.backgroundColor = UIColor.black.withAlphaComponent(0.55)
-        button.layer.cornerRadius = 16
-        button.accessibilityLabel = "Close"
-        button.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(button)
-        NSLayoutConstraint.activate([
-            button.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
-            button.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
-            button.widthAnchor.constraint(equalToConstant: 32),
-            button.heightAnchor.constraint(equalToConstant: 32)
-        ])
-        container.bringSubviewToFront(button)
+    /// Hosts the sample-buffer layer view behind `sourceView`'s content so it is
+    /// "on screen" for PiP without being visible. Replaces any prior parent.
+    private func attachSampleBufferView(_ bufferView: SampleBufferVideoCallView, to sourceView: UIView) {
+        bufferView.removeFromSuperview()
+        bufferView.translatesAutoresizingMaskIntoConstraints = true
+        bufferView.frame = sourceView.bounds
+        bufferView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        bufferView.isUserInteractionEnabled = false
+        sourceView.insertSubview(bufferView, at: 0)
     }
 
     /// Clean up state for re-enabling (without fully disabling)
@@ -541,18 +521,37 @@ public class IVSPictureInPictureController: NSObject {
         self.activeSourceView = sourceView
         self.pipContainerView = sourceView
         
-        // Create PiP content source using Video Call API
-        // The activeVideoCallSourceView is the ACTUAL view showing video in the app
-        let contentSource = AVPictureInPictureController.ContentSource(
-            activeVideoCallSourceView: sourceView,
-            contentViewController: pipVideoCallVC
-        )
+        let contentSource: AVPictureInPictureController.ContentSource
+        let usesSampleBufferSource = options.sourceView == .remote && sampleBufferVideoCallView != nil
+        if usesSampleBufferSource, let bufferView = sampleBufferVideoCallView {
+            // Viewer PiP: sample-buffer playback source. Unlike the video-call
+            // API, the system draws its own controls (close, restore) on this
+            // window. The layer must be in the on-screen hierarchy, so it sits
+            // behind the real remote view (which paints over it). Frames come
+            // from the IVSImageDevice callback via enqueueFrame().
+            attachSampleBufferView(bufferView, to: sourceView)
+            contentSource = AVPictureInPictureController.ContentSource(
+                sampleBufferDisplayLayer: bufferView.sampleBufferDisplayLayer,
+                playbackDelegate: self
+            )
+        } else {
+            // Broadcaster PiP keeps the Video Call API (camera multitasking).
+            // The activeVideoCallSourceView is the ACTUAL view showing video in the app.
+            contentSource = AVPictureInPictureController.ContentSource(
+                activeVideoCallSourceView: sourceView,
+                contentViewController: pipVideoCallVC
+            )
+        }
         self.pipContentSource = contentSource
         
         // Create PiP controller
         let controller = AVPictureInPictureController(contentSource: contentSource)
         controller.delegate = self
         controller.canStartPictureInPictureAutomaticallyFromInline = options.autoEnterOnBackground
+        if usesSampleBufferSource {
+            // Live stream: hide the skip buttons (there is nothing to seek).
+            controller.requiresLinearPlayback = true
+        }
         
         self.pipController = controller
         
@@ -930,6 +929,19 @@ public class IVSPictureInPictureController: NSObject {
             return nil
         }
         
+        // Live video: show each frame as soon as it is enqueued rather than
+        // waiting on a timebase (the sample-buffer PiP source has none of ours).
+        if let sb = sampleBuffer,
+           let attachments = CMSampleBufferGetSampleAttachmentsArray(sb, createIfNecessary: true),
+           CFArrayGetCount(attachments) > 0 {
+            let dict = unsafeBitCast(CFArrayGetValueAtIndex(attachments, 0), to: CFMutableDictionary.self)
+            CFDictionarySetValue(
+                dict,
+                Unmanaged.passUnretained(kCMSampleAttachmentKey_DisplayImmediately).toOpaque(),
+                Unmanaged.passUnretained(kCFBooleanTrue).toOpaque()
+            )
+        }
+        
         // Increment frame count
         frameCount += 1
         
@@ -1251,18 +1263,20 @@ extension IVSPictureInPictureController: AVPictureInPictureControllerDelegate {
 extension IVSPictureInPictureController: AVPictureInPictureSampleBufferPlaybackDelegate {
     
     public func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController, setPlaying playing: Bool) {
-        // For live streaming, we ignore play/pause requests - always playing
+        // Live stream: pausing is not supported. Re-assert "playing" so the
+        // system button flips back instead of showing a stale paused state.
         print("🖼️ [PiP] setPlaying: \(playing) (ignored - live stream)")
+        pictureInPictureController.invalidatePlaybackState()
     }
     
     public func pictureInPictureControllerTimeRangeForPlayback(_ pictureInPictureController: AVPictureInPictureController) -> CMTimeRange {
-        // Return .invalid to indicate live streaming (no seek bar, no time display)
-        // This tells the system there's no seekable content
-        return .invalid
+        // Unbounded range is the live-content convention: no scrubber or
+        // elapsed time (.invalid would read as "not ready").
+        return CMTimeRange(start: .negativeInfinity, duration: .positiveInfinity)
     }
     
     public func pictureInPictureControllerIsPlaybackPaused(_ pictureInPictureController: AVPictureInPictureController) -> Bool {
-        // Live streaming is never paused - always return false
+        // Live streaming is never paused.
         return false
     }
     
