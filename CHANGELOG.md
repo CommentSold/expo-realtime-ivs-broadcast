@@ -2,6 +2,15 @@
 
 All notable changes to `expo-realtime-ivs-broadcast`.
 
+## 0.5.3 — 2026-11-12
+
+### Fixed
+
+- **iOS viewer PiP: the stop button did nothing.** 0.5.2 called
+  `stopPictureInPicture()` from the playback delegate, which AVKit invokes off
+  the main thread, where the call is ignored (device log: `setPlaying: false`
+  fired, PiP kept rendering, no `Will stop`). It now hops to the main queue.
+
 ## 0.5.2 — 2026-11-12
 
 ### Changed

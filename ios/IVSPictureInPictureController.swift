@@ -1301,11 +1301,18 @@ extension IVSPictureInPictureController: AVPictureInPictureSampleBufferPlaybackD
         // for this kind of content, so honor it as "stop": end PiP without
         // restoring the app. Consumers see `stopped` with no preceding
         // `restored`, exactly like the X, and close the live.
-        print("🖼️ [PiP] setPlaying: \(playing) - treating as stop (live stream)")
-        if playing {
-            pictureInPictureController.invalidatePlaybackState()
-        } else {
-            pictureInPictureController.stopPictureInPicture()
+        print("🖼️ [PiP] setPlaying: \(playing) - treating as stop (live stream), main thread: \(Thread.isMainThread)")
+        // AVKit invokes this delegate off the main thread, and
+        // stopPictureInPicture() is ignored there (0.5.2 logged the call but PiP
+        // kept running). Hop to main.
+        DispatchQueue.main.async { [weak pictureInPictureController] in
+            guard let controller = pictureInPictureController else { return }
+            if playing {
+                controller.invalidatePlaybackState()
+            } else {
+                controller.stopPictureInPicture()
+                print("🖼️ [PiP] stopPictureInPicture() requested from setPlaying")
+            }
         }
     }
     
