@@ -2,6 +2,17 @@
 
 All notable changes to `expo-realtime-ivs-broadcast`.
 
+## 0.5.1 — 2026-11-12
+
+### Fixed
+
+- **iOS viewer: a dark "LIVE / Broadcasting in progress" card flashed for ~0.3s
+  when opening a live.** Since 0.5.0 the PiP sample-buffer layer sits behind the
+  remote view, so the PiP pre-warm frames showed through until IVS painted its
+  first frame. Viewer (remote) PiP now pre-warms with solid black and no longer
+  switches to the branded card when frames stall (it holds the last frame). The
+  branded card remains for broadcaster (local) PiP.
+
 ## 0.5.0 — 2026-11-12
 
 ### Changed

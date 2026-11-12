@@ -1033,6 +1033,36 @@ public class IVSPictureInPictureController: NSObject {
         print("🖼️ [PiP] Placeholder pixel buffer created")
     }
     
+    /// Solid-black frame used to pre-warm viewer (remote) PiP. The sample-buffer
+    /// layer sits behind the remote view, so anything drawn here can show through
+    /// before IVS paints its first frame. The branded "LIVE / Broadcasting in
+    /// progress" frame is for the broadcaster's own PiP only.
+    private lazy var blackPixelBuffer: CVPixelBuffer? = {
+        let width = 540
+        let height = 960
+        let attributes: [String: Any] = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String: width,
+            kCVPixelBufferHeightKey as String: height,
+            kCVPixelBufferIOSurfacePropertiesKey as String: [:]
+        ]
+        var buffer: CVPixelBuffer?
+        CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_32BGRA, attributes as CFDictionary, &buffer)
+        guard let b = buffer else { return nil }
+        CVPixelBufferLockBaseAddress(b, [])
+        if let base = CVPixelBufferGetBaseAddress(b) {
+            // BGRA zero = transparent black; set alpha to opaque.
+            memset(base, 0, CVPixelBufferGetBytesPerRow(b) * height)
+            let bytesPerRow = CVPixelBufferGetBytesPerRow(b)
+            for row in 0..<height {
+                let rowPtr = base.advanced(by: row * bytesPerRow).assumingMemoryBound(to: UInt8.self)
+                for x in 0..<width { rowPtr[x * 4 + 3] = 255 }
+            }
+        }
+        CVPixelBufferUnlockBaseAddress(b, [])
+        return b
+    }()
+
     /// Start generating placeholder frames to keep PiP alive
     private func startPlaceholderFrameGeneration() {
         guard placeholderTimer == nil else { return }
@@ -1057,7 +1087,8 @@ public class IVSPictureInPictureController: NSObject {
     
     /// Enqueue a placeholder frame
     private func enqueuePlaceholderFrame() {
-        guard isEnabled, let pixelBuffer = placeholderPixelBuffer, let displayLayer = sampleBufferDisplayLayer else {
+        let placeholder = options.sourceView == .remote ? blackPixelBuffer : placeholderPixelBuffer
+        guard isEnabled, let pixelBuffer = placeholder, let displayLayer = sampleBufferDisplayLayer else {
             return
         }
         
@@ -1080,6 +1111,9 @@ public class IVSPictureInPictureController: NSObject {
     private func checkForPlaceholderSwitch() {
         let timeSinceLastFrame = CFAbsoluteTimeGetCurrent() - lastRealFrameTime
         
+        // Viewer PiP just holds the last frame when the stream stalls; the
+        // "Broadcasting in progress" card is only meaningful to the broadcaster.
+        guard options.sourceView == .local else { return }
         if timeSinceLastFrame > placeholderTimeout && !isUsingPlaceholder && isActive {
             print("🖼️ [PiP] No real frames for \(timeSinceLastFrame)s, switching to placeholder")
             startPlaceholderFrameGeneration()
