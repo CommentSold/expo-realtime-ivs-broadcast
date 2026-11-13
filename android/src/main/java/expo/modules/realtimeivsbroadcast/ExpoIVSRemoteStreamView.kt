@@ -1,6 +1,8 @@
 package expo.modules.realtimeivsbroadcast
 
 import android.content.Context
+import android.view.ViewGroup
+import android.widget.LinearLayout
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -18,8 +20,17 @@ import expo.modules.kotlin.views.ExpoView
 
 @RequiresApi(Build.VERSION_CODES.P)
 class ExpoIVSRemoteStreamView(context: Context, appContext: AppContext) : ExpoView(context, appContext), PiPStateListener {
+    // React Native never re-measures natively added children on its own
+    // (facebook/react-native#17968): a surface added after the first layout pass
+    // stayed 0x0, which is the black screen after returning from PiP. Have
+    // ExpoView measure and lay out our children after every requestLayout().
+    override val shouldUseAndroidLayout: Boolean = true
+
     // Use SurfaceView instead of TextureView for better PiP performance
     private var ivsSurfaceView: ImagePreviewSurfaceView? = null
+    // Second preview of the same device, hosted in the Activity's content view
+    // only while in PiP (see addPipOverlaySurface).
+    private var pipOverlaySurface: ImagePreviewSurfaceView? = null
     private var currentImageDevice: ImageDevice? = null
     private var stageManager: IVSStageManager? = null
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -60,6 +71,58 @@ class ExpoIVSRemoteStreamView(context: Context, appContext: AppContext) : ExpoVi
             surface.visibility = View.VISIBLE
             surface.keepScreenOn = true
         }
+
+        addPipOverlaySurface()
+    }
+
+    /**
+     * The PiP window resizes the whole Activity, but React Native's layout did
+     * not reliably follow (it stayed at the PiP size from the first resize, so
+     * the video showed cropped to its top-left and left white gaps after the
+     * user enlarged the window). While in PiP, show a second preview of the same
+     * device directly in the Activity's content view, where plain Android layout
+     * fills whatever size the window currently has. The original surface stays
+     * untouched in this view, so there is nothing to restore on exit (moving the
+     * original between parents left it black: the IVS view does not rebind after
+     * its surface is recreated).
+     */
+    private fun addPipOverlaySurface() {
+        if (pipOverlaySurface != null) return
+        val device = currentImageDevice ?: return
+        val content = appContext.currentActivity?.findViewById<ViewGroup>(android.R.id.content)
+        if (content == null) {
+            Log.w("ExpoIVSRemoteStreamView", "No activity content view; PiP uses the in-place surface")
+            return
+        }
+        try {
+            val overlay = device.getPreviewSurfaceView(aspectModeFor(scaleMode))
+            overlay.setZOrderOnTop(false)
+            overlay.setZOrderMediaOverlay(true)
+            content.addView(
+                overlay,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT
+                )
+            )
+            pipOverlaySurface = overlay
+            Log.i("ExpoIVSRemoteStreamView", "📺 Added PiP overlay surface in activity content")
+        } catch (e: Exception) {
+            Log.w("ExpoIVSRemoteStreamView", "Could not add PiP overlay surface: ${e.message}")
+        }
+    }
+
+    private fun removePipOverlaySurface() {
+        pipOverlaySurface?.let { overlay ->
+            (overlay.parent as? ViewGroup)?.removeView(overlay)
+            Log.i("ExpoIVSRemoteStreamView", "📺 Removed PiP overlay surface")
+        }
+        pipOverlaySurface = null
+    }
+
+    private fun aspectModeFor(mode: String): AspectMode = when (mode.lowercase()) {
+        "fit" -> AspectMode.FIT
+        else -> AspectMode.FILL
     }
     
     override fun onExitPiP() {
@@ -67,11 +130,10 @@ class ExpoIVSRemoteStreamView(context: Context, appContext: AppContext) : ExpoVi
         Log.i("ExpoIVSRemoteStreamView", "📺 Exited PiP mode - refreshing stream")
         
         ivsSurfaceView?.keepScreenOn = false
-        
-        // Re-render the stream to fix potential surface issues after PiP
-        mainHandler.postDelayed({
-            refreshStream()
-        }, 100)
+
+        removePipOverlaySurface()
+        // The in-place surface was never touched; just make sure it is laid out.
+        requestLayout()
     }
     
     /**
@@ -221,6 +283,7 @@ class ExpoIVSRemoteStreamView(context: Context, appContext: AppContext) : ExpoVi
                 this.currentImageDevice = imageDevice
                 this.currentRenderedDeviceUrn = device.descriptor.urn
                 addView(newSurfaceView)
+                if (isInPiPMode) addPipOverlaySurface()
                 
                 // Set up frame callback for monitoring
                 setupFrameCallback(imageDevice)
@@ -250,9 +313,10 @@ class ExpoIVSRemoteStreamView(context: Context, appContext: AppContext) : ExpoVi
         // Clear frame callback first
         clearFrameCallback()
         
-        if (ivsSurfaceView != null) {
+        removePipOverlaySurface()
+        ivsSurfaceView?.let { surface ->
             Log.d("ExpoIVSRemoteStreamView", "Cleaning up stream view")
-            removeView(ivsSurfaceView)
+            (surface.parent as? ViewGroup)?.removeView(surface)
             ivsSurfaceView = null
         }
         currentImageDevice = null

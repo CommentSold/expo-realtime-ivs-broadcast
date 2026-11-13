@@ -47,6 +47,7 @@
     },
     "plugins": [
       "expo-router",
+      "../app.plugin.js",
       [
         "expo-build-properties",
         {

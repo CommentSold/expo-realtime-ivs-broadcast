@@ -45,14 +45,14 @@ The example app lives in `example/` and uses Expo Router. Run it with `npx expo 
 - **`ExpoRealtimeIvsBroadcastModule.swift`** — Module entry point, delegates to `IVSStageManager` singleton.
 - **`IVSStageManager.swift`** — Core logic. Contains `CustomCameraCapture` (custom AVFoundation wrapper, not IVS SDK's built-in camera). Camera discovery uses fallback chain. Camera mute generates placeholder frames rather than releasing hardware.
 - **`IVSPictureInPictureController.swift`** — PiP via `AVPlayerViewController`. Custom video composition for local camera PiP. Multitasking camera on iOS 16+.
-- Pod dependency: `AmazonIVSBroadcast/Stages ~> 1.36.0`
+- IVS SDK: vendored xcframework (1.48.1) fetched by `scripts/fetch-ios-sdk.sh` via the `app.plugin.js` config plugin (no CocoaPods)
 
 ### Android Native (`android/`) — Kotlin, API 28+
 
 - **`ExpoRealtimeIvsBroadcastModule.kt`** — Module entry point with singleton `IVSStageManager`.
 - **`IVSStageManager.kt`** — Implements `Stage.Strategy` and `StageRenderer` interfaces. Device discovery via IVS SDK.
 - **`PictureInPictureManager.kt`** — Activity-level PiP with auto-enter on background.
-- Dependency: `com.amazonaws:ivs-broadcast:1.31.0:stages@aar`
+- Dependency: `com.amazonaws:ivs-broadcast:1.48.1:stages@aar` (keep in sync with the iOS script)
 
 ### Key Design Decisions
 

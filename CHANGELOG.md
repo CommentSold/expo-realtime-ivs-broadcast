@@ -2,6 +2,138 @@
 
 All notable changes to `expo-realtime-ivs-broadcast`.
 
+## 0.5.8
+
+- android: fix viewer PiP. (1) The PiP window showed only the top-left of the video and
+  left white gaps after enlarging it: React Native's layout does not follow PiP window
+  resizes, so while in PiP a second preview of the same stream is hosted directly in the
+  Activity's content view, where Android layout fills the real window. It is removed when
+  PiP ends and the original surface is never touched. (2) Returning from PiP showed black:
+  `refreshStream()` added a new surface that React Native never laid out (0x0).
+  `ExpoIVSRemoteStreamView` now sets `shouldUseAndroidLayout`, so natively added children
+  are measured, and it no longer re-creates the surface on PiP exit.
+
+## 0.5.7
+
+- ios: fix the remaining black flash when a live opens. Viewer PiP's sample-buffer
+  layer can start showing live frames before the remote view builds its
+  `IVSImagePreviewView`; the new preview is opaque black until its first frame and
+  covered the live video for ~100 ms (a timing race, ~50% of starts). The preview now
+  starts at 0.01 alpha for 0.25 s when the PiP layer is already behind it, so the
+  layer's identical video shows through.
+
+## 0.5.6
+
+- ios: shorten the PiP stop-button fallback (controller teardown) from 0.8 s to 0.3 s.
+  `stopPictureInPicture()` is always ignored from the stop button, so the teardown is
+  the real path; the window now closes sooner.
+- ios: viewer PiP no longer enqueues black placeholder frames while real frames are
+  flowing. They sat in the on-screen sample-buffer layer and flickered over the live
+  video for ~100 ms right after a live opened (the layer alternated between black
+  placeholders and real frames during the 0.5 s pre-warm).
+
+## 0.5.5
+
+- ios: fix the PiP stop button. 0.5.3's diagnosis (off-main call) was wrong: the
+  callback was already on main and `stopPictureInPicture()` was still ignored when
+  called synchronously from `setPlaying`. Now the playback state is reported paused,
+  the stop is requested 150 ms later, and if iOS still hasn't begun stopping after
+  0.8 s the controller is torn down (closing the window) and `stopped` is emitted.
+
+## 0.5.4
+
+- ios: the podspec now runs `scripts/fetch-ios-sdk.sh` on every `pod install`, so the
+  vendored IVS xcframework is restored after `node_modules` is re-extracted
+  (previously only `expo prebuild` fetched it).
+- ios: the download is verified against a pinned SHA-256 per SDK version.
+
+## 0.5.3 — 2026-11-12
+
+### Fixed
+
+- **iOS viewer PiP: the stop button did nothing.** 0.5.2 called
+  `stopPictureInPicture()` from the playback delegate, which AVKit invokes off
+  the main thread, where the call is ignored (device log: `setPlaying: false`
+  fired, PiP kept rendering, no `Will stop`). It now hops to the main queue.
+
+## 0.5.2 — 2026-11-12
+
+### Changed
+
+- **iOS viewer PiP: the center stop button now stops.** The sample-buffer PiP
+  window shows a stop (square) button for live content, and it used to do
+  nothing. Tapping it now ends PiP without restoring the app (same
+  `onPiPStateChanged: stopped` as the X), so consumers close the live. There is
+  no public API to hide the button.
+
+## 0.5.1 — 2026-11-12
+
+### Fixed
+
+- **iOS viewer: a dark "LIVE / Broadcasting in progress" card flashed for ~0.3s
+  when opening a live.** Since 0.5.0 the PiP sample-buffer layer sits behind the
+  remote view, so the PiP pre-warm frames showed through until IVS painted its
+  first frame. Viewer (remote) PiP now pre-warms with solid black and no longer
+  switches to the branded card when frames stall (it holds the last frame). The
+  branded card remains for broadcaster (local) PiP.
+
+## 0.5.0 — 2026-11-12
+
+### Changed
+
+- **iOS viewer PiP now uses the sample-buffer playback source** (`sourceView: 'remote'`).
+  The video-call API window has no system controls, and touches never reach
+  custom views in it (so the 0.4.1 close "X" was inert). The sample-buffer
+  window gets the system's own controls: close (X) and restore. Because the
+  system now owns the window, tapping its body reveals the controls instead of
+  restoring the app immediately; the expand button restores.
+  - The sample-buffer layer is hosted behind the remote stream view (on screen
+    but covered), fed by the existing `IVSImageDevice` frame callback.
+  - Live-stream playback: unbounded time range, `requiresLinearPlayback`
+    (no skip buttons), frames flagged display-immediately. Pause is not
+    supported; the play/pause button re-asserts "playing".
+  - Broadcaster PiP (`sourceView: 'local'`) is unchanged (video-call API).
+
+### Removed
+
+- The inert PiP close button added in 0.4.1.
+
+## 0.4.1 — 2026-11-12
+
+### Added
+
+- **iOS: close button in the PiP window.** The video-call PiP window has no
+  system close control, so the PiP content view now draws an "X" (top-left).
+  It stops PiP without restoring the app; consumers see `onPiPStateChanged`
+  `stopped` with no preceding `restored`. Tapping anywhere else still restores
+  the app. Play/pause and skip are not provided (live stream, video-call PiP).
+
+## 0.4.0 — 2026-11-12
+
+CommentSold fork. Focus: production hardening for the viewer (subscribe-only) path.
+
+### Changed
+
+- **IVS Broadcast SDK bumped: Android 1.31.0 → 1.48.1, iOS 1.36 → 1.48.1.**
+  Both platforms compile clean (iOS Debug + Release, Android `compileDebugKotlin`).
+  Android emits new deprecation warnings for `Stage.Strategy` and
+  `Stage.SubscribeType`; migration to the replacement APIs is a follow-up.
+- **iOS now vendors the SDK xcframework instead of the CocoaPods dependency.**
+  AWS stopped publishing to CocoaPods at 1.39.0. `scripts/fetch-ios-sdk.sh`
+  downloads the Stages xcframework into `ios/Frameworks/` (gitignored); the
+  podspec vendors it. New `app.plugin.js` config plugin runs the script during
+  `expo prebuild`. Add `"expo-realtime-ivs-broadcast"` to the app's `plugins`.
+  Override the version with `IVS_SDK_VERSION`. Keep it in sync with
+  `android/build.gradle`.
+
+### Fixed
+
+- **A failed join now reads the same on both platforms.** iOS emitted
+  `onStageConnectionStateChanged` with `state: "error"` (not in the declared
+  `connecting | connected | disconnected` type); Android emitted no connection
+  event at all. Both now emit `onStageError` (fatal) plus a connection state of
+  `disconnected` with an `error` string.
+
 ## 0.3.2 — 2026-08-25
 
 ### Fixed

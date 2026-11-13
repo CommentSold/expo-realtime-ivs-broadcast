@@ -65,3 +65,6 @@ yarn-error.log
 
 # created by running expo CLI at the repo root
 /app.json
+
+# Vendored IVS iOS SDK (downloaded by scripts/fetch-ios-sdk.sh)
+ios/Frameworks/

@@ -253,6 +253,13 @@ class IVSStageManager(private val context: Context) : Stage.Strategy, StageRende
                         "isFatal" to true
                     )
                 )
+                // Mirror iOS: a failed join also reads as a disconnect, so consumers
+                // that only watch connection state (e.g. a viewer deciding to fall
+                // back to HLS) don't have to listen for onStageError too.
+                delegate?.stageManagerDidEmitEvent(
+                    "onStageConnectionStateChanged",
+                    mapOf("state" to "disconnected", "error" to "Failed to join stage: ${e.message}")
+                )
             }
         }
     }

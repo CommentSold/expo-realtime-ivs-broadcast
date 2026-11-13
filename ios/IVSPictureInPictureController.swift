@@ -314,6 +314,11 @@ public class IVSPictureInPictureController: NSObject {
     private var placeholderPixelBuffer: CVPixelBuffer?
     private var isUsingPlaceholder: Bool = false
     private var lastRealFrameTime: CFAbsoluteTime = 0
+    /// Viewer PiP only: placeholder (black) frames are suppressed until this
+    /// time, and whenever real frames are flowing. They are visible in the
+    /// on-screen layer, so they flicker over the live video (see
+    /// `enqueuePlaceholderFrame`).
+    private var placeholderEligibleAfter: CFAbsoluteTime = 0
     private let placeholderTimeout: CFTimeInterval = 0.5 // Switch to placeholder after 0.5s without frames
     
     // MARK: - Initialization
@@ -404,6 +409,7 @@ public class IVSPictureInPictureController: NSObject {
             sampleBufferView.topAnchor.constraint(equalTo: pipVideoCallVC.view.topAnchor),
             sampleBufferView.bottomAnchor.constraint(equalTo: pipVideoCallVC.view.bottomAnchor)
         ])
+
         
         // NOTE: We'll set the activeSourceView later when setupWithSourceView is called
         // The activeVideoCallSourceView MUST be the actual visible view showing video
@@ -415,6 +421,17 @@ public class IVSPictureInPictureController: NSObject {
         return true
     }
     
+    /// Hosts the sample-buffer layer view behind `sourceView`'s content so it is
+    /// "on screen" for PiP without being visible. Replaces any prior parent.
+    private func attachSampleBufferView(_ bufferView: SampleBufferVideoCallView, to sourceView: UIView) {
+        bufferView.removeFromSuperview()
+        bufferView.translatesAutoresizingMaskIntoConstraints = true
+        bufferView.frame = sourceView.bounds
+        bufferView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        bufferView.isUserInteractionEnabled = false
+        sourceView.insertSubview(bufferView, at: 0)
+    }
+
     /// Clean up state for re-enabling (without fully disabling)
     private func cleanupForReEnable() {
         // Stop any active PiP
@@ -508,19 +525,39 @@ public class IVSPictureInPictureController: NSObject {
     private func completeSetupWithSourceView(_ sourceView: UIView, pipVideoCallVC: AVPictureInPictureVideoCallViewController) {
         self.activeSourceView = sourceView
         self.pipContainerView = sourceView
+        placeholderEligibleAfter = CFAbsoluteTimeGetCurrent() + 1.5
         
-        // Create PiP content source using Video Call API
-        // The activeVideoCallSourceView is the ACTUAL view showing video in the app
-        let contentSource = AVPictureInPictureController.ContentSource(
-            activeVideoCallSourceView: sourceView,
-            contentViewController: pipVideoCallVC
-        )
+        let contentSource: AVPictureInPictureController.ContentSource
+        let usesSampleBufferSource = options.sourceView == .remote && sampleBufferVideoCallView != nil
+        if usesSampleBufferSource, let bufferView = sampleBufferVideoCallView {
+            // Viewer PiP: sample-buffer playback source. Unlike the video-call
+            // API, the system draws its own controls (close, restore) on this
+            // window. The layer must be in the on-screen hierarchy, so it sits
+            // behind the real remote view (which paints over it). Frames come
+            // from the IVSImageDevice callback via enqueueFrame().
+            attachSampleBufferView(bufferView, to: sourceView)
+            contentSource = AVPictureInPictureController.ContentSource(
+                sampleBufferDisplayLayer: bufferView.sampleBufferDisplayLayer,
+                playbackDelegate: self
+            )
+        } else {
+            // Broadcaster PiP keeps the Video Call API (camera multitasking).
+            // The activeVideoCallSourceView is the ACTUAL view showing video in the app.
+            contentSource = AVPictureInPictureController.ContentSource(
+                activeVideoCallSourceView: sourceView,
+                contentViewController: pipVideoCallVC
+            )
+        }
         self.pipContentSource = contentSource
         
         // Create PiP controller
         let controller = AVPictureInPictureController(contentSource: contentSource)
         controller.delegate = self
         controller.canStartPictureInPictureAutomaticallyFromInline = options.autoEnterOnBackground
+        if usesSampleBufferSource {
+            // Live stream: hide the skip buttons (there is nothing to seek).
+            controller.requiresLinearPlayback = true
+        }
         
         self.pipController = controller
         
@@ -898,6 +935,19 @@ public class IVSPictureInPictureController: NSObject {
             return nil
         }
         
+        // Live video: show each frame as soon as it is enqueued rather than
+        // waiting on a timebase (the sample-buffer PiP source has none of ours).
+        if let sb = sampleBuffer,
+           let attachments = CMSampleBufferGetSampleAttachmentsArray(sb, createIfNecessary: true),
+           CFArrayGetCount(attachments) > 0 {
+            let dict = unsafeBitCast(CFArrayGetValueAtIndex(attachments, 0), to: CFMutableDictionary.self)
+            CFDictionarySetValue(
+                dict,
+                Unmanaged.passUnretained(kCMSampleAttachmentKey_DisplayImmediately).toOpaque(),
+                Unmanaged.passUnretained(kCFBooleanTrue).toOpaque()
+            )
+        }
+        
         // Increment frame count
         frameCount += 1
         
@@ -989,6 +1039,36 @@ public class IVSPictureInPictureController: NSObject {
         print("🖼️ [PiP] Placeholder pixel buffer created")
     }
     
+    /// Solid-black frame used to pre-warm viewer (remote) PiP. The sample-buffer
+    /// layer sits behind the remote view, so anything drawn here can show through
+    /// before IVS paints its first frame. The branded "LIVE / Broadcasting in
+    /// progress" frame is for the broadcaster's own PiP only.
+    private lazy var blackPixelBuffer: CVPixelBuffer? = {
+        let width = 540
+        let height = 960
+        let attributes: [String: Any] = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String: width,
+            kCVPixelBufferHeightKey as String: height,
+            kCVPixelBufferIOSurfacePropertiesKey as String: [:]
+        ]
+        var buffer: CVPixelBuffer?
+        CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_32BGRA, attributes as CFDictionary, &buffer)
+        guard let b = buffer else { return nil }
+        CVPixelBufferLockBaseAddress(b, [])
+        if let base = CVPixelBufferGetBaseAddress(b) {
+            // BGRA zero = transparent black; set alpha to opaque.
+            memset(base, 0, CVPixelBufferGetBytesPerRow(b) * height)
+            let bytesPerRow = CVPixelBufferGetBytesPerRow(b)
+            for row in 0..<height {
+                let rowPtr = base.advanced(by: row * bytesPerRow).assumingMemoryBound(to: UInt8.self)
+                for x in 0..<width { rowPtr[x * 4 + 3] = 255 }
+            }
+        }
+        CVPixelBufferUnlockBaseAddress(b, [])
+        return b
+    }()
+
     /// Start generating placeholder frames to keep PiP alive
     private func startPlaceholderFrameGeneration() {
         guard placeholderTimer == nil else { return }
@@ -1013,7 +1093,20 @@ public class IVSPictureInPictureController: NSObject {
     
     /// Enqueue a placeholder frame
     private func enqueuePlaceholderFrame() {
-        guard isEnabled, let pixelBuffer = placeholderPixelBuffer, let displayLayer = sampleBufferDisplayLayer else {
+        if options.sourceView == .remote {
+            // The viewer's layer sits in the visible hierarchy, so black
+            // placeholders interleaved with real frames showed as a ~100 ms
+            // flicker when a live opened. Real frames already come from the
+            // IVSImageDevice callback and make PiP possible on their own; only
+            // fall back to a black frame if the stream has produced nothing
+            // for a while (nothing is on screen to flicker then).
+            let now = CFAbsoluteTimeGetCurrent()
+            if now < placeholderEligibleAfter || now - lastRealFrameTime < 1.0 {
+                return
+            }
+        }
+        let placeholder = options.sourceView == .remote ? blackPixelBuffer : placeholderPixelBuffer
+        guard isEnabled, let pixelBuffer = placeholder, let displayLayer = sampleBufferDisplayLayer else {
             return
         }
         
@@ -1036,12 +1129,19 @@ public class IVSPictureInPictureController: NSObject {
     private func checkForPlaceholderSwitch() {
         let timeSinceLastFrame = CFAbsoluteTimeGetCurrent() - lastRealFrameTime
         
+        // Viewer PiP just holds the last frame when the stream stalls; the
+        // "Broadcasting in progress" card is only meaningful to the broadcaster.
+        guard options.sourceView == .local else { return }
         if timeSinceLastFrame > placeholderTimeout && !isUsingPlaceholder && isActive {
             print("🖼️ [PiP] No real frames for \(timeSinceLastFrame)s, switching to placeholder")
             startPlaceholderFrameGeneration()
         }
     }
     
+    /// Set when the user tapped the system stop button; cleared once PiP
+    /// actually stops or starts again.
+    private var stopRequestedFromControls = false
+
     private func cleanup() {
         // Ensure we're on the main thread for UI operations
         guard Thread.isMainThread else {
@@ -1134,6 +1234,7 @@ public class IVSPictureInPictureController: NSObject {
 extension IVSPictureInPictureController: AVPictureInPictureControllerDelegate {
     
     public func pictureInPictureControllerWillStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
+        stopRequestedFromControls = false
         print("🖼️ [PiP] Will start")
     }
     
@@ -1168,10 +1269,12 @@ extension IVSPictureInPictureController: AVPictureInPictureControllerDelegate {
     }
     
     public func pictureInPictureControllerWillStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
+        stopRequestedFromControls = false
         print("🖼️ [PiP] Will stop")
     }
     
     public func pictureInPictureControllerDidStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
+        stopRequestedFromControls = false
         isActive = false
         isRestoringFromPiP = false
 
@@ -1185,6 +1288,7 @@ extension IVSPictureInPictureController: AVPictureInPictureControllerDelegate {
         
         // Flush the display layer to prepare for fresh frames
         sampleBufferDisplayLayer?.flush()
+        placeholderEligibleAfter = CFAbsoluteTimeGetCurrent() + 1.5
         
         // Pre-warm with a few placeholder frames so PiP can start again immediately
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
@@ -1219,19 +1323,53 @@ extension IVSPictureInPictureController: AVPictureInPictureControllerDelegate {
 extension IVSPictureInPictureController: AVPictureInPictureSampleBufferPlaybackDelegate {
     
     public func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController, setPlaying playing: Bool) {
-        // For live streaming, we ignore play/pause requests - always playing
-        print("🖼️ [PiP] setPlaying: \(playing) (ignored - live stream)")
+        // A live stream can't be paused, and iOS shows a stop (square) button
+        // for this kind of content, so honor it as "stop": end PiP without
+        // restoring the app. Consumers see `stopped` with no preceding
+        // `restored`, exactly like the X, and close the live.
+        print("🖼️ [PiP] setPlaying: \(playing) - treating as stop (live stream), main thread: \(Thread.isMainThread)")
+        DispatchQueue.main.async { [weak self, weak pictureInPictureController] in
+            guard let self = self, let controller = pictureInPictureController else { return }
+            if playing {
+                self.stopRequestedFromControls = false
+                controller.invalidatePlaybackState()
+                return
+            }
+            // 0.5.3 showed stopPictureInPicture() is ignored when called
+            // synchronously from this callback (even on main). Report the
+            // paused state so AVKit's view of playback matches the tap, then
+            // request the stop on a later runloop turn.
+            self.stopRequestedFromControls = true
+            controller.invalidatePlaybackState()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self, weak controller] in
+                guard let self = self, let controller = controller, self.pipController === controller else { return }
+                controller.stopPictureInPicture()
+                print("🖼️ [PiP] stopPictureInPicture() requested from setPlaying")
+            }
+            // Last resort: if iOS still hasn't started stopping, release the
+            // controller (which closes the PiP window) and report the stop
+            // ourselves since `Did stop` won't fire.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self, weak controller] in
+                guard let self = self, let controller = controller,
+                      self.stopRequestedFromControls, self.pipController === controller else { return }
+                print("🖼️ [PiP] stop request ignored by iOS; tearing down controller")
+                self.stopRequestedFromControls = false
+                self.cleanup()
+                self.delegate?.pictureInPictureDidStop()
+            }
+        }
     }
     
     public func pictureInPictureControllerTimeRangeForPlayback(_ pictureInPictureController: AVPictureInPictureController) -> CMTimeRange {
-        // Return .invalid to indicate live streaming (no seek bar, no time display)
-        // This tells the system there's no seekable content
-        return .invalid
+        // Unbounded range is the live-content convention: no scrubber or
+        // elapsed time (.invalid would read as "not ready").
+        return CMTimeRange(start: .negativeInfinity, duration: .positiveInfinity)
     }
     
     public func pictureInPictureControllerIsPlaybackPaused(_ pictureInPictureController: AVPictureInPictureController) -> Bool {
-        // Live streaming is never paused - always return false
-        return false
+        // Live streaming is never paused, except right after the user tapped
+        // the stop button (see setPlaying).
+        return stopRequestedFromControls
     }
     
     public func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController, didTransitionToRenderSize newRenderSize: CMVideoDimensions) {
