@@ -104,6 +104,22 @@ class ExpoIVSRemoteStreamView: ExpoView {
             self.ivsImagePreviewView = newPreview
             self.currentRenderedDeviceUrn = deviceUrn
             self.currentRenderedParticipantId = participantId
+
+            // Viewer PiP hosts its sample-buffer layer inside this view and it
+            // starts showing live frames as soon as PiP is set up, which can be
+            // before this preview exists. A new IVSImagePreviewView is opaque
+            // black until it paints its first frame, so adding it on top made
+            // the live flash black for ~100 ms right after the first frame.
+            // Keep it nearly transparent briefly so the layer's identical video
+            // shows through, then reveal it. (Not exactly 0, so it keeps
+            // rendering.)
+            let hasLiveLayerBehind = subviews.contains { $0 is SampleBufferVideoCallView }
+            if hasLiveLayerBehind {
+                newPreview.alpha = 0.01
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak newPreview] in
+                    newPreview?.alpha = 1
+                }
+            }
             addSubview(newPreview)
 
             newPreview.translatesAutoresizingMaskIntoConstraints = false

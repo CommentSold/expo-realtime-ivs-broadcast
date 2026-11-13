@@ -2,6 +2,15 @@
 
 All notable changes to `expo-realtime-ivs-broadcast`.
 
+## 0.5.7
+
+- ios: fix the remaining black flash when a live opens. Viewer PiP's sample-buffer
+  layer can start showing live frames before the remote view builds its
+  `IVSImagePreviewView`; the new preview is opaque black until its first frame and
+  covered the live video for ~100 ms (a timing race, ~50% of starts). The preview now
+  starts at 0.01 alpha for 0.25 s when the PiP layer is already behind it, so the
+  layer's identical video shows through.
+
 ## 0.5.6
 
 - ios: shorten the PiP stop-button fallback (controller teardown) from 0.8 s to 0.3 s.
