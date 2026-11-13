@@ -2,6 +2,14 @@
 
 All notable changes to `expo-realtime-ivs-broadcast`.
 
+## 0.5.5
+
+- ios: fix the PiP stop button. 0.5.3's diagnosis (off-main call) was wrong: the
+  callback was already on main and `stopPictureInPicture()` was still ignored when
+  called synchronously from `setPlaying`. Now the playback state is reported paused,
+  the stop is requested 150 ms later, and if iOS still hasn't begun stopping after
+  0.8 s the controller is torn down (closing the window) and `stopped` is emitted.
+
 ## 0.5.4
 
 - ios: the podspec now runs `scripts/fetch-ios-sdk.sh` on every `pod install`, so the

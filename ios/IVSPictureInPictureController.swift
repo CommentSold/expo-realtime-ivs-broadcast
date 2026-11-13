@@ -1120,6 +1120,10 @@ public class IVSPictureInPictureController: NSObject {
         }
     }
     
+    /// Set when the user tapped the system stop button; cleared once PiP
+    /// actually stops or starts again.
+    private var stopRequestedFromControls = false
+
     private func cleanup() {
         // Ensure we're on the main thread for UI operations
         guard Thread.isMainThread else {
@@ -1212,6 +1216,7 @@ public class IVSPictureInPictureController: NSObject {
 extension IVSPictureInPictureController: AVPictureInPictureControllerDelegate {
     
     public func pictureInPictureControllerWillStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
+        stopRequestedFromControls = false
         print("🖼️ [PiP] Will start")
     }
     
@@ -1246,10 +1251,12 @@ extension IVSPictureInPictureController: AVPictureInPictureControllerDelegate {
     }
     
     public func pictureInPictureControllerWillStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
+        stopRequestedFromControls = false
         print("🖼️ [PiP] Will stop")
     }
     
     public func pictureInPictureControllerDidStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
+        stopRequestedFromControls = false
         isActive = false
         isRestoringFromPiP = false
 
@@ -1302,16 +1309,34 @@ extension IVSPictureInPictureController: AVPictureInPictureSampleBufferPlaybackD
         // restoring the app. Consumers see `stopped` with no preceding
         // `restored`, exactly like the X, and close the live.
         print("🖼️ [PiP] setPlaying: \(playing) - treating as stop (live stream), main thread: \(Thread.isMainThread)")
-        // AVKit invokes this delegate off the main thread, and
-        // stopPictureInPicture() is ignored there (0.5.2 logged the call but PiP
-        // kept running). Hop to main.
-        DispatchQueue.main.async { [weak pictureInPictureController] in
-            guard let controller = pictureInPictureController else { return }
+        DispatchQueue.main.async { [weak self, weak pictureInPictureController] in
+            guard let self = self, let controller = pictureInPictureController else { return }
             if playing {
+                self.stopRequestedFromControls = false
                 controller.invalidatePlaybackState()
-            } else {
+                return
+            }
+            // 0.5.3 showed stopPictureInPicture() is ignored when called
+            // synchronously from this callback (even on main). Report the
+            // paused state so AVKit's view of playback matches the tap, then
+            // request the stop on a later runloop turn.
+            self.stopRequestedFromControls = true
+            controller.invalidatePlaybackState()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self, weak controller] in
+                guard let self = self, let controller = controller, self.pipController === controller else { return }
                 controller.stopPictureInPicture()
                 print("🖼️ [PiP] stopPictureInPicture() requested from setPlaying")
+            }
+            // Last resort: if iOS still hasn't started stopping, release the
+            // controller (which closes the PiP window) and report the stop
+            // ourselves since `Did stop` won't fire.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self, weak controller] in
+                guard let self = self, let controller = controller,
+                      self.stopRequestedFromControls, self.pipController === controller else { return }
+                print("🖼️ [PiP] stop request ignored by iOS; tearing down controller")
+                self.stopRequestedFromControls = false
+                self.cleanup()
+                self.delegate?.pictureInPictureDidStop()
             }
         }
     }
@@ -1323,8 +1348,9 @@ extension IVSPictureInPictureController: AVPictureInPictureSampleBufferPlaybackD
     }
     
     public func pictureInPictureControllerIsPlaybackPaused(_ pictureInPictureController: AVPictureInPictureController) -> Bool {
-        // Live streaming is never paused.
-        return false
+        // Live streaming is never paused, except right after the user tapped
+        // the stop button (see setPlaying).
+        return stopRequestedFromControls
     }
     
     public func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController, didTransitionToRenderSize newRenderSize: CMVideoDimensions) {
