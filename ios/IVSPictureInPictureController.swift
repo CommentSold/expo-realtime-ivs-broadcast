@@ -314,6 +314,11 @@ public class IVSPictureInPictureController: NSObject {
     private var placeholderPixelBuffer: CVPixelBuffer?
     private var isUsingPlaceholder: Bool = false
     private var lastRealFrameTime: CFAbsoluteTime = 0
+    /// Viewer PiP only: placeholder (black) frames are suppressed until this
+    /// time, and whenever real frames are flowing. They are visible in the
+    /// on-screen layer, so they flicker over the live video (see
+    /// `enqueuePlaceholderFrame`).
+    private var placeholderEligibleAfter: CFAbsoluteTime = 0
     private let placeholderTimeout: CFTimeInterval = 0.5 // Switch to placeholder after 0.5s without frames
     
     // MARK: - Initialization
@@ -520,6 +525,7 @@ public class IVSPictureInPictureController: NSObject {
     private func completeSetupWithSourceView(_ sourceView: UIView, pipVideoCallVC: AVPictureInPictureVideoCallViewController) {
         self.activeSourceView = sourceView
         self.pipContainerView = sourceView
+        placeholderEligibleAfter = CFAbsoluteTimeGetCurrent() + 1.5
         
         let contentSource: AVPictureInPictureController.ContentSource
         let usesSampleBufferSource = options.sourceView == .remote && sampleBufferVideoCallView != nil
@@ -1087,6 +1093,18 @@ public class IVSPictureInPictureController: NSObject {
     
     /// Enqueue a placeholder frame
     private func enqueuePlaceholderFrame() {
+        if options.sourceView == .remote {
+            // The viewer's layer sits in the visible hierarchy, so black
+            // placeholders interleaved with real frames showed as a ~100 ms
+            // flicker when a live opened. Real frames already come from the
+            // IVSImageDevice callback and make PiP possible on their own; only
+            // fall back to a black frame if the stream has produced nothing
+            // for a while (nothing is on screen to flicker then).
+            let now = CFAbsoluteTimeGetCurrent()
+            if now < placeholderEligibleAfter || now - lastRealFrameTime < 1.0 {
+                return
+            }
+        }
         let placeholder = options.sourceView == .remote ? blackPixelBuffer : placeholderPixelBuffer
         guard isEnabled, let pixelBuffer = placeholder, let displayLayer = sampleBufferDisplayLayer else {
             return
@@ -1270,6 +1288,7 @@ extension IVSPictureInPictureController: AVPictureInPictureControllerDelegate {
         
         // Flush the display layer to prepare for fresh frames
         sampleBufferDisplayLayer?.flush()
+        placeholderEligibleAfter = CFAbsoluteTimeGetCurrent() + 1.5
         
         // Pre-warm with a few placeholder frames so PiP can start again immediately
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
@@ -1330,7 +1349,7 @@ extension IVSPictureInPictureController: AVPictureInPictureSampleBufferPlaybackD
             // Last resort: if iOS still hasn't started stopping, release the
             // controller (which closes the PiP window) and report the stop
             // ourselves since `Did stop` won't fire.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self, weak controller] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self, weak controller] in
                 guard let self = self, let controller = controller,
                       self.stopRequestedFromControls, self.pipController === controller else { return }
                 print("🖼️ [PiP] stop request ignored by iOS; tearing down controller")

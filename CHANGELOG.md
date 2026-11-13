@@ -2,6 +2,16 @@
 
 All notable changes to `expo-realtime-ivs-broadcast`.
 
+## 0.5.6
+
+- ios: shorten the PiP stop-button fallback (controller teardown) from 0.8 s to 0.3 s.
+  `stopPictureInPicture()` is always ignored from the stop button, so the teardown is
+  the real path; the window now closes sooner.
+- ios: viewer PiP no longer enqueues black placeholder frames while real frames are
+  flowing. They sat in the on-screen sample-buffer layer and flickered over the live
+  video for ~100 ms right after a live opened (the layer alternated between black
+  placeholders and real frames during the 0.5 s pre-warm).
+
 ## 0.5.5
 
 - ios: fix the PiP stop button. 0.5.3's diagnosis (off-main call) was wrong: the
