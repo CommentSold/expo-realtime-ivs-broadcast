@@ -2,6 +2,13 @@
 
 All notable changes to `expo-realtime-ivs-broadcast`.
 
+## 0.5.4
+
+- ios: the podspec now runs `scripts/fetch-ios-sdk.sh` on every `pod install`, so the
+  vendored IVS xcframework is restored after `node_modules` is re-extracted
+  (previously only `expo prebuild` fetched it).
+- ios: the download is verified against a pinned SHA-256 per SDK version.
+
 ## 0.5.3 — 2026-11-12
 
 ### Fixed
