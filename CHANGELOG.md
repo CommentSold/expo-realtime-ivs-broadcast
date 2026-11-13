@@ -2,6 +2,17 @@
 
 All notable changes to `expo-realtime-ivs-broadcast`.
 
+## 0.5.8
+
+- android: fix viewer PiP. (1) The PiP window showed only the top-left of the video and
+  left white gaps after enlarging it: React Native's layout does not follow PiP window
+  resizes, so while in PiP a second preview of the same stream is hosted directly in the
+  Activity's content view, where Android layout fills the real window. It is removed when
+  PiP ends and the original surface is never touched. (2) Returning from PiP showed black:
+  `refreshStream()` added a new surface that React Native never laid out (0x0).
+  `ExpoIVSRemoteStreamView` now sets `shouldUseAndroidLayout`, so natively added children
+  are measured, and it no longer re-creates the surface on PiP exit.
+
 ## 0.5.7
 
 - ios: fix the remaining black flash when a live opens. Viewer PiP's sample-buffer
