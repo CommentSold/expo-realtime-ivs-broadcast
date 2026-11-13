@@ -2,6 +2,12 @@
 
 All notable changes to `expo-realtime-ivs-broadcast`.
 
+## 1.0.0
+
+First stable release of the CommentSold fork, hardened for the IVS Real-Time **viewer**
+path. It is the cumulative result of 0.4.0 through 0.5.8 below; the 0.x git tags were
+removed when this was cut, so depend on `v1.0.0` (or later) only.
+
 ## 0.5.8
 
 - android: fix viewer PiP. (1) The PiP window showed only the top-left of the video and
